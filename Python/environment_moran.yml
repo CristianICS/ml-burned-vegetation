@@ -1,0 +1,9 @@
+# conda env create --file=
+name: moran
+channels:
+  - anaconda
+  - conda-forge
+dependencies:
+  - geopandas
+  - pysal
+  - esda

@@ -1,0 +1,30 @@
+# conda env create --file=
+name: classification
+channels:
+  - conda-forge
+dependencies:
+  - asf_search
+  - cartopy
+  - contextily
+  - earthengine-api
+  - gdal
+  - geemap
+  - geopandas
+  - imbalanced-learn=0.12.2
+  - ipykernel
+  - ipympl
+  - jupyter
+  - matplotlib-scalebar
+  - owslib
+  - py6s
+  - pypdf
+  - python
+  - rasterstats
+  - scikit-learn=1.4.2
+  - seaborn
+  - shap
+  - pip
+  - pip:
+      - dbfread
+      - pyodbc
+      - tabulate
