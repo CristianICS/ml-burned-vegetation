@@ -16,8 +16,7 @@ Notebooks/inspect_ifn3_4.ipynb
 papers/
 results/logs/
 results/tile_extracted_values/
+results/dataset_with_ifn.gpkg
 Python/__pycache__/
-Python/train_models_deprecated.py
-Python/classify.py
-Python/create_composites.py
 Python_deprecated/
+README_esp.md
