@@ -6,7 +6,7 @@ This repository contains the Python code and workflows used in the article:
 
 The framework integrates **Landsat multispectral imagery**, **topographic and edaphic variables**, and **machine-learning classifiers** (Random Forest and Support Vector Machines) to classify forest vegetation and its associated burned-shrub states across Aragón, Spain.
 
-All pipelines are fully reproducible and have been published on [Zenodo](https://zenodo.org/) ![DOI](https://zenodo.org/badge/1056569546.svg).
+All pipelines are fully reproducible and have been published on [Zenodo](https://zenodo.org/) [![DOI](https://zenodo.org/badge/1056569546.svg)](https://doi.org/10.5281/zenodo.17123378).
 
 ---
 
