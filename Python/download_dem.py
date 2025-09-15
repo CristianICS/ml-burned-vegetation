@@ -32,7 +32,7 @@ ROOT = Path(__file__).resolve().parent.parent
 output_dir = Path(ROOT, "data/predictor_variables/dem")
 
 # Root folder containing harmonized Landsat scenes and the tiles layer.
-images_dir = r"H:\Borini\harmoPAF\HarmoPAF_time_series"
+images_dir = Path(ROOT, r"HarmoPAF_time_series")
 
 # -----------------------------------------------------------------------------
 # 1) Load tile footprints

@@ -35,7 +35,7 @@ out_folder.mkdir(parents=True, exist_ok=True)  # ensure output folder exists
 
 # Landsat/Sentinel composites images
 # TIP: Make this configurable (e.g., via env var) rather than a hard-coded Windows path
-images_path = Path(r"H:\Borini\harmoPAF\HarmoPAF_time_series")
+images_path = Path(ROOT, "HarmoPAF_time_series")
 
 # Geometry of image tiles (used to filter points within tiles)
 tile_bboxes_path = Path(ROOT, "tiles_perimeters.gpkg")

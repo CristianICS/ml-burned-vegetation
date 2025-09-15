@@ -1,3 +1,4 @@
+"""Compute Moran's I for dataset version."""
 import libpysal
 from pathlib import Path
 from esda.moran import Moran
@@ -5,7 +6,7 @@ from utils_models import Dataset
 
 ROOT = Path(__file__).resolve().parent.parent
 # Load your GeoDataFrame
-labels_dataset_path = Path(ROOT, "results/dataset_with_values.gpkg")
+labels_dataset_path = Path(ROOT, "results/dataset.gpkg")
 label_codes_path = Path(ROOT, "data/labels/label_codes.csv")
 dataset = Dataset(labels_dataset_path, label_codes_path, 3)
 

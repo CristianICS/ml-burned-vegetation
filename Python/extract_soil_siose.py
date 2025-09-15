@@ -36,7 +36,7 @@ TILES_PATH = ROOT / "data" / "divided_tiles_by_area.gpkg"
 TILES = gpd.read_file(TILES_PATH)
 
 # Harmonized images root
-IMAGES_PATH = Path(r"H:\Borini\harmoPAF\HarmoPAF_time_series")
+IMAGES_PATH = Path(ROOT, "HarmoPAF_time_series")
 
 # DEM-derived products used by IL
 ASPECT_VRT = ROOT / "data" / "predictor_variables" / "dem" / "aspect.vrt"
