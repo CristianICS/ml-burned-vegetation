@@ -1,4 +1,4 @@
-"""Download SIOSE from a each tile"""
+"""Download SIOSE from the extension of each image tile."""
 from rasterio.warp import transform_bounds # type: ignore
 from rasterio.crs import CRS # type: ignore
 from owslib.wms import WebMapService # type: ignore

@@ -1,198 +1,204 @@
 """
-Automatic extraction of soil with sparse vegetation points.
+Automatic extraction of sparse-vegetation (bare soil) points.
+
+Pipeline (per tile and year)
+1) Build mean summer composite and its NDVI.
+2) Keep low-NDVI pixels (bare soil candidates) and thin them by distance.
+3) Compute IL (illumination) and retain well-lit points (IL > 0.7).
+4) Sample SIOSE RGB codes and keep only bare-soil classes.
+5) Append results to a GeoPackage.
 """
-from rasterio.io import MemoryFile # type: ignore
-from scipy.spatial import KDTree # type: ignore
-from shapely import Point # type: ignore
+
+from __future__ import annotations
+
 from pathlib import Path
 
-import geopandas as gpd # type: ignore
-import numpy as np # type: ignore
-import rasterio # type: ignore
+import geopandas as gpd  # type: ignore
+import numpy as np  # type: ignore
+import rasterio  # type: ignore
+from rasterio.io import MemoryFile  # type: ignore
+from scipy.spatial import KDTree  # type: ignore
+from shapely.geometry import Point  # type: ignore
 
-from utils import Tile, Rasters
+from utils_tile import Tile, Composite
 from utils_il import IL
 
+
+# ------------------------------- Config --------------------------------------
+
 ROOT = Path(__file__).resolve().parent.parent
-# Output path to store extracted points
-out_path = Path(ROOT, r"data\labels\ground_points_db.gpkg")
 
-# Load divided tiles (the ones created with "create_dem.py")
-tiles_path = Path(ROOT, "data/divided_tiles_by_area.gpkg")
-tiles = gpd.read_file(tiles_path)
-# Borini images path
-images_path = r"H:\Borini\harmoPAF\HarmoPAF_time_series"
+# Output path (parent dir will be created if missing)
+OUT_PATH = ROOT / "data" / "labels" / "ground_points_db.gpkg"
 
-# Images to compute IL image
-# It is used to remove low NDVI values produced by shadows (not soil)
-aspect_path = Path(ROOT, "data/predictor_variables/dem/aspect.vrt")
-slope_path = Path(ROOT, "data/predictor_variables/dem/slope.vrt")
+# Divided tiles (created by create_dem.py)
+TILES_PATH = ROOT / "data" / "divided_tiles_by_area.gpkg"
+TILES = gpd.read_file(TILES_PATH)
 
-# SIOSE target codes (the ones related to bare soils)
-valid_codiige = {
+# Harmonized images root
+IMAGES_PATH = Path(r"H:\Borini\harmoPAF\HarmoPAF_time_series")
+
+# DEM-derived products used by IL
+ASPECT_VRT = ROOT / "data" / "predictor_variables" / "dem" / "aspect.vrt"
+SLOPE_VRT = ROOT / "data" / "predictor_variables" / "dem" / "slope.vrt"
+
+# SIOSE “bare soil” class RGB codes
+VALID_CODIIGE = {
     "roquedo": [217, 214, 199],
-    "temporalmente_desarbolado_por_incendios": [60, 80, 60], # No existe en Aragon para 2005 a 2014
-    "suelo_desnudo": [210, 242, 194]
+    "temporalmente_desarbolado_por_incendios": [60, 80, 60], # not in Aragon
+    "suelo_desnudo": [210, 242, 194],
 }
+SIOSE_YEARS = [2005, 2009, 2011, 2014]
 
-siose_years = [2005, 2009, 2011, 2014]
 
-def filter_by_distance(df: gpd.GeoDataFrame, distance = 200):
+# ------------------------------ Utilities ------------------------------------
+
+def filter_by_distance(
+    df: gpd.GeoDataFrame,
+    distance: float = 200.0
+) -> gpd.GeoDataFrame:
     """
-    Using query_ball_point to find all points without certain distance,
-    and keeping only one of them.
+    Greedy thinning: keep one point per KDTree neighborhood within `distance`.
     """
-    # Extract coordinates
-    points = np.vstack(df.geometry.apply(lambda geom: (geom.x, geom.y)))
-    
-    # Step 1: Build the KDTree
-    tree = KDTree(points)
+    if df.empty:
+        return df
 
-    # Find clusters: Get all neighbors within 150m
-    neighbors_list = tree.query_ball_point(points, r=distance)
-
-    # Step 2: Efficient Filtering (Greedy selection)
-    selected = np.zeros(len(points), dtype=bool)  # Boolean mask to track kept points
-    visited = np.zeros(len(points), dtype=bool)  # Tracks points that are processed
-
-    for i in range(len(points)):
-        if visited[i]: 
-            continue  # Skip points already removed
-        
-        selected[i] = True  # Keep this point
-        visited[neighbors_list[i]] = True  # Mark all neighbors as visited
-
-    # Return the valid points (the ones without nearest neighbor)
-    return df.loc[selected, :].copy()
-
-def extract_ndvi_points(ndvi: np.array, img_meta):
-    """
-    Extract the NDVI values from a rasterio array. Get the centroid of each
-    pixel and save the NDVI data.
-    """
-    # Define the NDVI threshold (select only bare soil)
-    mask = (ndvi >= 0.08) & (ndvi <= 0.15)
-
-    # Get row and column indices of the selected pixels
-    rows, cols = np.where(mask)
-
-    # Convert row, col indices to x, y coordinates
-    x_list, y_list = rasterio.transform.xy(img_meta["transform"], rows, cols)
-
-    # Extract the NDVI values of selected pixels
-    ndvi_values = ndvi[rows, cols]
-
-    # Create a GeoDataFrame with the extracted points
-    gdf = gpd.GeoDataFrame(
-        {"NDVI": ndvi_values},
-        geometry=[Point(x, y) for x, y in zip(x_list, y_list)],
-        crs=img_meta["crs"]
+    coords = np.column_stack(
+        (df.geometry.x.to_numpy(), df.geometry.y.to_numpy())
     )
-    return gdf
+    tree = KDTree(coords)
+    neighbors = tree.query_ball_point(coords, r=distance)
 
-for i, tile in tiles.iterrows():
+    selected = np.zeros(len(coords), dtype=bool)
+    visited = np.zeros(len(coords), dtype=bool)
 
-    print(f"Process tile {tile["name"]}, subtile {tile["subtile_fid"]}")
-    tile_obj = Tile(Path(images_path, tile["name"]))
-    tile_years = tile_obj.get_years()
-
-    for siose_year in siose_years:
-        # Get next year if the siose's year is not inside tile year
-        if siose_year not in tile_years:
+    for i in range(len(coords)):
+        if visited[i]:
             continue
+        selected[i] = True
+        visited[neighbors[i]] = True
 
-        # Generate a mean composite with all the year
-        # Select summer interval in order to reduce shadows
-        filter_dates = [f'{siose_year}-{s}' for s in ["06-01", "07-31"]]
-        img_props = tile_obj.filter_date(filter_dates[0], filter_dates[1])
-        # Load images inside the tile
-        tile_bbox = tile.geometry.bounds
-        images = Rasters(img_props, tile_obj.imgs_dir, tile_bbox, tiles.crs)
-        images.compute_mean()
-        images.compute_ndvi()
+    return df.loc[selected].copy()
 
-        # Extract only NDVI values related to bare soil
-        # The last band of the composite is the NDVI
-        ndvi_pnts = extract_ndvi_points(
-            images.composite[-1, :, :], images.composite_meta)
-        
-        # Avoid processing empty geodataframes
-        if ndvi_pnts.shape[0] == 0:
-            continue
 
-        # Filter points by distance avoiding spatial autocorrelation
-        ndvi_pnts = filter_by_distance(ndvi_pnts)
-        ndvi_pnts.loc[:, "YEAR"] = siose_year
-        
-        # Obtain the IL array
-        il = IL(img_props, images.bounds, images.composite_meta["crs"])
-        il_array = il.compute(aspect_path, slope_path)
-        il_meta = images.composite_meta.copy()
-        il_meta.update({
-            "count": 1,
-            "dtype": il_array.dtype
-        })
-        # Create an in-memory raster. This allows to write a # NumPy array and
-        # metadata into a virtual file and use all Rasterio features like
-        #  sample() as if it were a real file.
-        with MemoryFile() as memfile:
-            with memfile.open(**il_meta) as dst:
-                # Add one band at the beginning to match rasterio format
-                dst.write(il_array[None, :, :])
-                
-                # Extract IL values intersecting the NDVI points,
-                # reproject them to the IL image CRS first.
-                pnts_repr = ndvi_pnts.to_crs(dst.meta["crs"]).geometry
-                # Transform coordinates into a list
-                # coords = [(x, y) for x, y in zip(pnts_repr.x, pnts_repr.y)]
-                # More efficient than the above line
-                coords = np.column_stack((pnts_repr.x.values, pnts_repr.y.values))
-                # Extract IL values
-                il_values = list(dst.sample(coords, indexes=1))
-        
-        ndvi_pnts.loc[:, "IL"] = np.array(il_values)
-        ndvi_pnts = ndvi_pnts.query("IL > 0.7")
+def extract_ndvi_points(ndvi: np.ndarray, img_meta: dict) -> gpd.GeoDataFrame:
+    """
+    Convert NDVI raster to point samples at pixel centroids within
+    a fixed NDVI range.
+    """
+    mask = (ndvi >= 0.08) & (ndvi <= 0.15)  # bare-soil candidates
+    if not mask.any():
+        return gpd.GeoDataFrame(geometry=[], crs=img_meta["crs"])
 
-        if ndvi_pnts.shape[0] == 0:
-            continue
+    rows, cols = np.where(mask)
+    xs, ys = rasterio.transform.xy(img_meta["transform"], rows, cols)
+    return gpd.GeoDataFrame(
+        {"NDVI": ndvi[rows, cols]},
+        geometry=[Point(x, y) for x, y in zip(xs, ys)],
+        crs=img_meta["crs"],
+    )
 
-        # Get SIOSE image array
-        siose_path = Path(ROOT, "data/siose", tile["name"],
-                          f"siose{siose_year}.tif")
-        
 
-        with rasterio.open(siose_path) as src:
+def _ensure_out_parent(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
 
-            # Extract SIOSE values in each ground point
-            # Reproject them to the SIOSE image CRS first.
-            pnts_repr = ndvi_pnts.to_crs(src.meta["crs"]).geometry
-            # Transform coordinates into a list
-            # coords = [(x, y) for x, y in zip(pnts_repr.x, pnts_repr.y)]
-            # More efficient than the above line
-            coords = np.column_stack((pnts_repr.x.values, pnts_repr.y.values))
-            # Extract siose values
-            siose_values = list(src.sample(coords))
 
-        # The SIOSE array has three bands: RGB
-        siose_bands = ["R", "G", "B"]
-        ndvi_pnts.loc[:, siose_bands] = np.array(siose_values)
-        ndvi_pnts.to_file(Path(ROOT, "test.gpkg"))
-        # Filter points by SIOSE values
-        for siose_code, [r, g, b] in valid_codiige.items():
-            
-            siose_query = f"R == {r} &  G == {g} & B == {b}"
-            ground_pnts = ndvi_pnts.query(siose_query).copy()
+def _to_flat_array(samples) -> np.ndarray:
+    """
+    Rasterio sample() yields 1×1 arrays; flatten to 1D.
+    """
+    # samples may be a generator of arrays shaped (bands,) or (1,) or (bands,1)
+    return np.asarray(
+        [np.squeeze(s).item()
+         if np.asarray(s).size == 1
+         else np.squeeze(s) for s in samples
+        ]
+    )
 
-            # Avoiding save empty dataframes
-            if ground_pnts.shape[0] == 0:
+
+# --------------------------------- Main --------------------------------------
+
+def main() -> None:
+    _ensure_out_parent(OUT_PATH)
+
+    for _, tile in TILES.iterrows():
+        print(f'Process tile {tile["name"]}, subtile {tile["subtile_fid"]}')
+
+        tile_obj = Tile(IMAGES_PATH / tile["name"])
+        tile_years = set(tile_obj.get_years())
+
+        for year in SIOSE_YEARS:
+            if year not in tile_years:
                 continue
-            
-            # Remove RGB columns by the its real value
-            ground_pnts.drop(columns=["R", "G", "B"], inplace=True)
-            ground_pnts["siose_codiige"] = siose_code
 
-            # Output filtered points
-            if Path(out_path).exists():
-                ground_pnts.to_file(out_path, mode='a')
-            else:
-                ground_pnts.to_file(out_path)
+            # 1) Composite & NDVI (summer window to reduce shadows)
+            start, end = f"{year}-06-01", f"{year}-07-31"
+            img_props = tile_obj.filter_date(start, end)
+            bbox = tile.geometry.bounds
+            images = Composite(img_props, tile_obj.imgs_dir, bbox, TILES.crs)
+            images.compute_mean()
+            images.compute_ndvi()
+
+            # 2) NDVI → points, then distance thinning
+            ndvi_points = extract_ndvi_points(
+                images.composite[-1, :, :],
+                images.composite_meta
+            )
+            if ndvi_points.empty:
+                continue
+
+            ndvi_points = filter_by_distance(ndvi_points, distance=200.0)
+            if ndvi_points.empty:
+                continue
+
+            ndvi_points.loc[:, "YEAR"] = year
+
+            # 3) IL computation and filtering
+            il = IL(img_props, images.bounds, images.composite_meta["crs"])
+            il_array = il.compute(ASPECT_VRT, SLOPE_VRT)
+
+            il_meta = images.composite_meta.copy()
+            il_meta.update({"count": 1, "dtype": il_array.dtype})
+
+            with MemoryFile() as memfile:
+                with memfile.open(**il_meta) as ds:
+                    ds.write(il_array[None, :, :])  # add band axis
+
+                    pts_reproj = ndvi_points.to_crs(ds.meta["crs"]).geometry
+                    coords = np.column_stack(
+                        (pts_reproj.x.to_numpy(), pts_reproj.y.to_numpy())
+                    )
+                    il_vals = _to_flat_array(ds.sample(coords, indexes=1))
+
+            ndvi_points.loc[:, "IL"] = il_vals
+            ndvi_points = ndvi_points.query("IL > 0.7")
+            if ndvi_points.empty:
+                continue
+
+            # 4) SIOSE sampling
+            siose_path = ROOT / "data" / "siose" / tile["name"] / f"siose{year}.tif"
+            with rasterio.open(siose_path) as src:
+                pts_reproj = ndvi_points.to_crs(src.meta["crs"]).geometry
+                coords = np.column_stack((pts_reproj.x.to_numpy(), pts_reproj.y.to_numpy()))
+                siose_samples = list(src.sample(coords))  # returns list of arrays length=3 (RGB)
+            siose_arr = np.asarray(siose_samples)
+            ndvi_points[["R", "G", "B"]] = siose_arr
+
+            # 5) Filter by SIOSE bare-soil classes and write
+            for siose_code, (r, g, b) in VALID_CODIIGE.items():
+                mask = (ndvi_points["R"] == r) & (ndvi_points["G"] == g) & (ndvi_points["B"] == b)
+                ground = ndvi_points.loc[mask].copy()
+                if ground.empty:
+                    continue
+
+                ground.drop(columns=["R", "G", "B"], inplace=True)
+                ground["siose_codiige"] = siose_code
+
+                if OUT_PATH.exists():
+                    ground.to_file(OUT_PATH, mode="a")
+                else:
+                    ground.to_file(OUT_PATH)
+
+
+if __name__ == "__main__":
+    main()

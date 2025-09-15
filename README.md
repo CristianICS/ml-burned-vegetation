@@ -1,3 +1,45 @@
+# Machine Learning for Post-Fire Vegetation Classification in Aragón
+
+This repository contains the Python code and workflows used in the article:
+
+**“Machine Learning for Temporal Classification of Forest and Shrub Cover in Burned Areas: A Case Study in Aragón (Spain)”**
+
+The framework integrates **Landsat multispectral imagery**, **topographic and edaphic variables**, and **machine-learning classifiers** (Random Forest and Support Vector Machines) to classify forest vegetation and their associated burned-shrub states across Aragón (Spain).
+
+All pipelines are fully reproducible and have been published on [Zenodo](https://zenodo.org/) (DOI: *to be added*).
+
+---
+
+## Features
+
+- Preprocessing of Landsat and ancillary data
+- Construction of training datasets from manual, inventory-based, and automatic sources
+- Covariate selection using correlation, VIF, and PCA approaches
+- Model training with Random Forest and Support Vector Machine
+- Resampling strategies for class imbalance (Random Undersampling, Tomek Links, SMOTE, SMOTENC)
+- Model evaluation with balanced accuracy, Cohen’s kappa, producer’s and user’s accuracy
+- Variable importance analysis with SHAP values
+- Assessment of spatial autocorrelation using Moran’s I
+
+---
+
+## Landsat images
+
+They are stored in a folder, and the classes inside `utils_tile.py` help handle them.
+
+## IFN Data
+
+Because of a confidential agreement, the IFN data from which the dataset versions 2 and 3 are produced is not uploaded.
+
+## Workflow
+
+1. `download_dem.py` Download the elevation data for each tile and create the related predictor variables.
+2. `download_siose.py` Save the SIOSE information for each image tile.
+3. `extract_soil_siose.py` Automatic extraction of the labels from sparse vegetation class.
+4. `create_dataset.py` Join the data from manual digitization, sparse vegetation and IFN in the same file, plus adding the predictor variables.
+5. `train_models.py` Perform the training phase of each model pipeline and save the stats.
+
+
 # Clasificación Machine Learning
 
 Objetivo: clasificar vegetación forestal y su subtipo de matorral alrededor de incendios forestales.

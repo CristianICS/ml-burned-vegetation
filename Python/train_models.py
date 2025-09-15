@@ -4,80 +4,115 @@ from pathlib import Path
 import pandas as pd
 import pickle
 
-# Dataset version
-version = 3
-# Grab folder with stats in non-loop trainings
-# When the folder time is not set to None, for loop by predictor ID is skipped
+# -------------------------------
+# Run configuration
+# -------------------------------
+
+# Dataset "version" selector used by Dataset(...) internal filters.
+version = 1
+
+# If you want to reuse a previous run folder, set `ctime_id` to that timestamp
+# (e.g., "20250131T104512"). If None, a new timestamped folder is created.
 ctime_id = None
+
+# When True, iterate over *all* predictor-set IDs for the chosen version.
+# When False, train only the specific `pred_id` defined below.
 use_loop = True
 
 if ctime_id is None:
-    # Save time as id for the current training session
+    # Use a wall-clock timestamp as this run's unique ID (YYYYMMDDThhmmss).
     ctime_id = datetime.now().strftime("%Y%m%dT%H%M%S")
 
+# Project root (this script is expected to be run as a file, not in a notebook)
 ROOT = Path(__file__).resolve().parent.parent
 
+# Output directory for logs, metrics, confusion matrices, etc.
 outpath = Path(ROOT, f"results/logs/train_dataset_v{version}_{ctime_id}")
 outpath.mkdir(exist_ok=True, parents=True)
 
-# Import labels and apply pretreatments described in inspect_predictors.ipynb
-labels_dataset_path = Path(ROOT, "results/dataset_with_values.gpkg")
+# -------------------------------
+# Data loading & preprocessing
+# -------------------------------
 
-dataset = Dataset(labels_dataset_path, version)
+# Source data produced by the feature engineering pipeline
+labels_dataset_path = Path(ROOT, "results/dataset.gpkg")
+label_codes_path = Path(ROOT, "data/labels/label_codes.csv")
 
-# print(dataset.predictor_groups())
-# Avoid iteration through predictor ids to avoid freezing with dataset 2-3
-pred_id = 'LspringPCA'
+# Build the Dataset object (handles cleaning, NDVI, PCA features, etc.)
+dataset = Dataset(labels_dataset_path, label_codes_path, version)
 
-# Init variables to store the stats and confusion matrices
-# Save current predictor set stats, computed with the best gridcv model
-stats_path = Path(outpath, f"best_gridcv_stats.csv")
+# If you want to run a single predictor group (when use_loop=False), set it here.
+# NOTE: With `use_loop=True`, this value is ignored (kept for convenience).
+pred_id = "LspringPCA"
+
+# -------------------------------
+# Warm-start / resume support
+# -------------------------------
+
+# The script writes three artifacts inside `outpath`:
+#   - best_gridcv_stats.csv      : tidy per-run metrics (append-only across runs)
+#   - gridcv_stats.pkl           : list of per-run grid-search summaries (params/scores)
+#   - confusion_matrices.pkl     : list of per-run confusion matrices
+
+# Initialize stats list, optionally preloading existing CSV to continue appending.
+stats_path = Path(outpath, "best_gridcv_stats.csv")
 try:
     saved_stats = pd.read_csv(stats_path)
     stats_list = [saved_stats]
-    # Check for predictor ID
+    # Optional: if running a single pred_id, ensure we don't duplicate it in-place
     if not use_loop and pred_id in pd.unique(saved_stats["pred_id"]):
-        raise ValueError(f"Predictor id {pred_id} already exists.")
-except:
+        raise ValueError(f"Predictor id '{pred_id}' already exists in {stats_path}.")
+except FileNotFoundError:
     stats_list = []
 
+# Initialize grid-search summaries
 try:
-    with open(Path(outpath, f"gridcv_stats.pkl"), "rb") as f:
+    with open(Path(outpath, "gridcv_stats.pkl"), "rb") as f:
         grid_list = pickle.load(f)
-except:
+except FileNotFoundError:
     grid_list = []
 
-# Save confusion matrices
+# Initialize confusion matrices
 try:
-    with open(Path(outpath, f"confusion_matrices.pkl"), 'rb') as f:
+    with open(Path(outpath, "confusion_matrices.pkl"), "rb") as f:
         cm_list = pickle.load(f)
-except:
+except FileNotFoundError:
     cm_list = []
 
-if not use_loop:
-    print(f"Start model training with {pred_id} dataset")
-    cm_dict, stats, grid_dict = loop_training(dataset, pred_id)
+# -------------------------------
+# Training
+# -------------------------------
 
-    cm_list.append(cm_dict)
-    stats_list.append(stats)
-    grid_list.append(grid_dict)
+if not use_loop:
+    # Single-run mode: train just the specified predictor set.
+    print(f"Start model training with {pred_id} dataset")
+
+    # BUGFIX: loop_training signature requires (dataset, pred_id, cm_list, stats_list, grid_list)
+    # and returns the three lists again. The original code called it with fewer args.
+    cm_list, stats_list, grid_list = loop_training(
+        dataset, pred_id, cm_list, stats_list, grid_list
+    )
 
 else:
-
-    for pred_id in dataset.predictor_sets.keys():
-
+    # Loop mode: iterate over all predictor-set IDs that match the current version.
+    for pred_id in dataset.get_predictor_groups(version):
         print(f"Start model training with {pred_id} dataset")
         cm_list, stats_list, grid_list = loop_training(
-            dataset, pred_id, cm_list, stats_list, grid_list)
+            dataset, pred_id, cm_list, stats_list, grid_list
+        )
 
-# Save current predictor set stats, computed with the best gridcv model
-stats_outpath = Path(outpath, f"best_gridcv_stats.csv")
-pd.concat(stats_list).to_csv(stats_outpath, index=False)
+# -------------------------------
+# Persist results
+# -------------------------------
 
-# Store gridcv metrics ave dictionary to .pkl file
-with open(Path(outpath, f"gridcv_stats.pkl"), 'wb') as fp:
+# Save/append tidy metrics for the current session
+stats_outpath = Path(outpath, "best_gridcv_stats.csv")
+pd.concat(stats_list, ignore_index=True).to_csv(stats_outpath, index=False)
+
+# Store GridSearchCV summaries (list of dicts) to a pickle file
+with open(Path(outpath, "gridcv_stats.pkl"), "wb") as fp:
     pickle.dump(grid_list, fp)
 
-# Save confusion matrices
-with open(Path(outpath, f"confusion_matrices.pkl"), 'wb') as fp:
+# Store confusion matrices (list of dicts) to a pickle file
+with open(Path(outpath, "confusion_matrices.pkl"), "wb") as fp:
     pickle.dump(cm_list, fp)

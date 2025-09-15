@@ -6,11 +6,6 @@ from dbfread import DBF # type: ignore
 import pyodbc # type: ignore
 import pandas as pd # type: ignore
 
-# Documented code guidelines
-# https://peps.python.org/pep-0008/
-# https://stackoverflow.com/a/24385103
-# https://peps.python.org/pep-0287/
-
 class Dbf:
 
     def __init__(self, path: str):
